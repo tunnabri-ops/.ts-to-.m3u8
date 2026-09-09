@@ -1,16 +1,22 @@
 import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, getDoc, setDoc } from 'firebase/firestore';
 import fs from 'fs';
 
+import { createRequire } from 'module';
+
 let firebaseConfig: any = {};
 try {
-  firebaseConfig = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
+  firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
 } catch (err) {
-  console.error('Failed to load firebase config:', err);
+  try {
+    const require = createRequire(import.meta.url);
+    firebaseConfig = require('./firebase-applet-config.json');
+  } catch (fallbackErr) {
+    console.error('Failed to load firebase config:', fallbackErr);
+  }
 }
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -19,6 +25,8 @@ const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 const app = express();
 app.use(express.json());
 const PORT = 3000;
+
+export default app;
 
 // Generate the shareable M3U8 link
 app.post('/api/save', async (req, res) => {
@@ -98,7 +106,13 @@ app.get('/api/p/:id.m3u8', async (req, res) => {
 });
 
 async function startServer() {
+  // If running in Vercel Serverless Functions, do not bind to port or use Vite middleware.
+  if (process.env.VERCEL) {
+    return;
+  }
+
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
