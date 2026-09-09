@@ -8,10 +8,12 @@ export default function handler(req: any, res: any) {
   }
 
   try {
-    const dataParam = req.query.data;
+    const dataParam = req.query.data as string;
     if (!dataParam) return res.status(400).send('Missing data');
 
-    const decoded = Buffer.from(dataParam, 'base64').toString('utf-8');
+    // Decode URL-encoded base64 safely before parsing
+    const decodedBase64 = decodeURIComponent(dataParam);
+    const decoded = Buffer.from(decodedBase64, 'base64').toString('utf-8');
     const data = JSON.parse(decoded);
 
     const urls = data.u || [];
