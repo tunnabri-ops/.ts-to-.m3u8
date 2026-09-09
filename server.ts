@@ -2,19 +2,19 @@ import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, doc, getDoc, setDoc } from 'firebase/firestore';
+import fs from 'fs';
 
-// Initialize Firebase Admin SDK
+let firebaseConfig: any = {};
 try {
-  initializeApp({
-    projectId: 'ai-studio-tstom3u8converte-6f749cff-df19-41d3-9c06-2f03bdfee7d6'
-  });
-} catch (error) {
-  console.error('Firebase initialization error', error);
+  firebaseConfig = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
+} catch (err) {
+  console.error('Failed to load firebase config:', err);
 }
 
-const db = getFirestore();
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 const app = express();
 app.use(express.json());
@@ -32,16 +32,17 @@ app.post('/api/save', async (req, res) => {
   
   try {
     // Handle simple collisions
-    const docRef = db.collection('playlists').doc(id);
-    const docSnap = await docRef.get();
+    const docRef = doc(db, 'playlists', id);
+    const docSnap = await getDoc(docRef);
     
-    if (docSnap.exists && !name) {
+    if (docSnap.exists() && !name) {
         id = crypto.randomBytes(5).toString('hex');
     }
 
-    await db.collection('playlists').doc(id).set({ 
+    await setDoc(doc(db, 'playlists', id), { 
       urls, 
       duration: duration || 10,
+      isLive: req.body.isLive || false,
       createdAt: new Date().toISOString()
     });
     
@@ -57,27 +58,34 @@ app.get('/api/p/:id.m3u8', async (req, res) => {
   const id = req.params.id;
   
   try {
-    const docSnap = await db.collection('playlists').doc(id).get();
+    const docSnap = await getDoc(doc(db, 'playlists', id));
     
-    if (!docSnap.exists) {
+    if (!docSnap.exists()) {
       return res.status(404).send('Playlist not found');
     }
 
-    const data = docSnap.data() as { urls: string[], duration: number };
-    const targetDuration = Math.ceil(Number(data.duration) || 10);
-    
+    const data = docSnap.data() as { urls: string[], duration: number, isLive?: boolean };
     let content = `#EXTM3U\n`;
-    content += `#EXT-X-VERSION:3\n`;
-    content += `#EXT-X-TARGETDURATION:${targetDuration}\n`;
-    content += `#EXT-X-MEDIA-SEQUENCE:0\n`;
-    content += `#EXT-X-PLAYLIST-TYPE:VOD\n`;
-
-    data.urls.forEach((url: string) => {
-      // Use exact duration if possible, some players are strict. Let's make sure it's a float.
-      const exactDuration = Number(data.duration).toFixed(3);
-      content += `#EXTINF:${exactDuration},\n${url}\n`;
-    });
-    content += `#EXT-X-ENDLIST\n`;
+    
+    if (data.isLive) {
+      // Standard IPTV format for continuous streams
+      data.urls.forEach((url: string, index: number) => {
+        content += `#EXTINF:-1,Live Stream ${index + 1}\n${url}\n`;
+      });
+    } else {
+      // Standard HLS VOD Playlist (Chunked TS segments)
+      const targetDuration = Math.ceil(Number(data.duration) || 10);
+      content += `#EXT-X-VERSION:3\n`;
+      content += `#EXT-X-TARGETDURATION:${targetDuration}\n`;
+      content += `#EXT-X-MEDIA-SEQUENCE:0\n`;
+      content += `#EXT-X-PLAYLIST-TYPE:VOD\n`;
+  
+      data.urls.forEach((url: string) => {
+        const exactDuration = Number(data.duration).toFixed(3);
+        content += `#EXTINF:${exactDuration},\n${url}\n`;
+      });
+      content += `#EXT-X-ENDLIST\n`;
+    }
 
     // Provide proper content type so media players recognize it
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');

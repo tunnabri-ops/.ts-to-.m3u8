@@ -5,34 +5,61 @@ export default function App() {
   const [tsUrls, setTsUrls] = useState('');
   const [duration, setDuration] = useState('10.0');
   const [playlistName, setPlaylistName] = useState('');
+  const [isLive, setIsLive] = useState(false);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareableLink, setShareableLink] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const m3u8Content = useMemo(() => {
-    if (!tsUrls.trim()) return '';
-    const urls = tsUrls
-      .split('\n')
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0);
+  const { urls, invalidUrls } = useMemo(() => {
+    if (!tsUrls.trim()) return { urls: [], invalidUrls: [] };
+    const lines = tsUrls.split('\n').map((u) => u.trim()).filter((u) => u.length > 0);
+    const valid: string[] = [];
+    const invalid: string[] = [];
+    
+    lines.forEach(line => {
+      try {
+        new URL(line);
+        if (line.startsWith('http://') || line.startsWith('https://')) {
+          valid.push(line);
+        } else {
+          invalid.push(line);
+        }
+      } catch {
+        invalid.push(line);
+      }
+    });
+    return { urls: valid, invalidUrls: invalid };
+  }, [tsUrls]);
 
-    const targetDuration = Math.ceil(Number(duration) || 10);
+  const m3u8Content = useMemo(() => {
+    if (urls.length === 0 || invalidUrls.length > 0) return '';
 
     let content = `#EXTM3U\n`;
-    content += `#EXT-X-VERSION:3\n`;
-    content += `#EXT-X-TARGETDURATION:${targetDuration}\n`;
-    content += `#EXT-X-MEDIA-SEQUENCE:0\n`;
-    content += `#EXT-X-PLAYLIST-TYPE:VOD\n`;
-
-    urls.forEach((url) => {
-      const exactDuration = Number(duration).toFixed(3);
-      content += `#EXTINF:${exactDuration},\n${url}\n`;
-    });
-
-    content += `#EXT-X-ENDLIST\n`;
+    
+    if (isLive) {
+      // Standard IPTV format for continuous streams
+      urls.forEach((url, index) => {
+        content += `#EXTINF:-1,Live Stream ${index + 1}\n${url}\n`;
+      });
+    } else {
+      // Standard HLS VOD Playlist (Chunked TS segments)
+      const targetDuration = Math.ceil(Number(duration) || 10);
+      content += `#EXT-X-VERSION:3\n`;
+      content += `#EXT-X-TARGETDURATION:${targetDuration}\n`;
+      content += `#EXT-X-MEDIA-SEQUENCE:0\n`;
+      content += `#EXT-X-PLAYLIST-TYPE:VOD\n`;
+  
+      urls.forEach((url) => {
+        const exactDuration = Number(duration).toFixed(3);
+        content += `#EXTINF:${exactDuration},\n${url}\n`;
+      });
+  
+      content += `#EXT-X-ENDLIST\n`;
+    }
+    
     return content;
-  }, [tsUrls, duration]);
+  }, [urls, invalidUrls, duration, isLive]);
 
   const copyToClipboard = (text: string, setStatus: (val: boolean) => void) => {
     if (!text) return;
@@ -85,13 +112,9 @@ export default function App() {
   };
 
   const generateOnlineLink = async () => {
-    if (!tsUrls.trim()) return;
+    if (urls.length === 0 || invalidUrls.length > 0) return;
     setIsLoading(true);
     setShareableLink('');
-    const urls = tsUrls
-      .split('\n')
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0);
       
     try {
       const res = await fetch('/api/save', {
@@ -100,7 +123,8 @@ export default function App() {
         body: JSON.stringify({ 
           name: playlistName.trim(), 
           urls, 
-          duration: Number(duration) || 10 
+          duration: Number(duration) || 10,
+          isLive
         })
       });
       const data = await res.json();
@@ -145,8 +169,19 @@ export default function App() {
                 value={tsUrls}
                 onChange={(e) => setTsUrls(e.target.value)}
                 placeholder="https://example.com/video_segment_1.ts&#10;https://example.com/video_segment_2.ts"
-                className="w-full h-64 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none font-mono text-sm leading-relaxed"
+                className={`w-full h-64 px-4 py-3 bg-slate-50 border rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all resize-none font-mono text-sm leading-relaxed ${invalidUrls.length > 0 ? 'border-rose-300' : 'border-slate-200'}`}
               />
+              {invalidUrls.length > 0 && (
+                <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                  <p className="text-sm font-medium text-rose-700 mb-1">Invalid URLs detected:</p>
+                  <ul className="list-disc list-inside text-xs text-rose-600 max-h-24 overflow-y-auto">
+                    {invalidUrls.map((invalidUrl, i) => (
+                      <li key={i} className="truncate">{invalidUrl}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-rose-500 mt-2">URLs must start with http:// or https://</p>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -166,24 +201,51 @@ export default function App() {
 
               <div>
                 <label htmlFor="duration" className="block text-sm font-medium text-slate-700 mb-2">
-                  Segment Duration (sec)
+                  Total Video Duration (sec)
                 </label>
-                <input
-                  id="duration"
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-                />
+                <div className="flex space-x-2">
+                  <input
+                    id="duration"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setDuration('999999')}
+                    className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-xl transition-colors whitespace-nowrap"
+                    title="If you don't know the video length, click here"
+                  >
+                    Unlimited
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-rose-500 font-medium">
+                  * If your video stops early, increase this or click 'Unlimited'.
+                </p>
               </div>
+            </div>
+
+            <div className="flex items-center space-x-3 mt-4 mb-4">
+              <input
+                type="checkbox"
+                id="isLive"
+                checked={isLive}
+                onChange={(e) => setIsLive(e.target.checked)}
+                className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+              />
+              <label htmlFor="isLive" className="text-sm font-medium text-slate-700">
+                Continuous / Live Stream (IPTV)
+                <span className="block text-xs text-slate-500 font-normal">Check this if the video stops playing early. (Removes VOD & ENDLIST tags)</span>
+              </label>
             </div>
             
             <div className="pt-2 border-t border-slate-100">
               <button
                 onClick={generateOnlineLink}
-                disabled={!m3u8Content || isLoading}
+                disabled={urls.length === 0 || invalidUrls.length > 0 || isLoading}
                 className="w-full flex items-center justify-center px-4 py-3.5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {isLoading ? (
