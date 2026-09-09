@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { FileVideo, Copy, Download, CheckCircle2, ListPlus, Link as LinkIcon, Loader2 } from 'lucide-react';
+import LZString from 'lz-string';
 
 export default function App() {
   const [tsUrls, setTsUrls] = useState('');
@@ -123,9 +124,9 @@ export default function App() {
         l: isLive
       };
       
-      // We must use encodeURIComponent because base64 can contain '+' which breaks URLs
-      const base64 = btoa(JSON.stringify(payload));
-      const fullUrl = `${window.location.origin}/api/generate.m3u8?data=${encodeURIComponent(base64)}`;
+      // Use LZString to drastically compress the URL list and make it perfectly URL-safe
+      const compressed = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+      const fullUrl = `${window.location.origin}/api/generate.m3u8?data=${compressed}`;
       
       setShareableLink(fullUrl);
     } catch (err) {

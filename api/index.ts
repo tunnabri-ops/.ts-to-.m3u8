@@ -1,3 +1,5 @@
+import LZString from 'lz-string';
+
 export default function handler(req: any, res: any) {
   // CORS Headers for Vercel
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11,10 +13,12 @@ export default function handler(req: any, res: any) {
     const dataParam = req.query.data as string;
     if (!dataParam) return res.status(400).send('Missing data');
 
-    // Decode URL-encoded base64 safely before parsing
-    const decodedBase64 = decodeURIComponent(dataParam);
-    const decoded = Buffer.from(decodedBase64, 'base64').toString('utf-8');
-    const data = JSON.parse(decoded);
+    // Decode LZString
+    const decompressed = LZString.decompressFromEncodedURIComponent(dataParam);
+    if (!decompressed) {
+      throw new Error("Failed to decompress");
+    }
+    const data = JSON.parse(decompressed);
 
     const urls = data.u || [];
     const duration = data.d || 10;
