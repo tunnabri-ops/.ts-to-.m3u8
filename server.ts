@@ -1,26 +1,15 @@
 import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, getDoc, setDoc } from 'firebase/firestore';
-import fs from 'fs';
+import { createClient } from 'redis';
 
-import { createRequire } from 'module';
+// Note: For Vercel, you need to provide REDIS_URL in environment variables
+const redisClient = process.env.REDIS_URL ? createClient({ url: process.env.REDIS_URL }) : createClient();
+redisClient.on('error', err => console.log('Redis Client Error', err));
+redisClient.connect().catch(console.error);
 
-let firebaseConfig: any = {};
-try {
-  firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
-} catch (err) {
-  try {
-    const require = createRequire(import.meta.url);
-    firebaseConfig = require('./firebase-applet-config.json');
-  } catch (fallbackErr) {
-    console.error('Failed to load firebase config:', fallbackErr);
-  }
-}
-
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+// Fallback memory storage if Redis isn't configured
+const memoryStore = new Map<string, string>();
 
 const app = express();
 app.use(express.json());
@@ -30,7 +19,7 @@ export default app;
 
 // Generate the shareable M3U8 link
 app.post('/api/save', async (req, res) => {
-  const { name, urls, duration } = req.body;
+  const { name, urls, duration, isLive } = req.body;
   if (!urls || !Array.isArray(urls)) {
     return res.status(400).json({ error: 'urls array is required' });
   }
@@ -38,22 +27,19 @@ app.post('/api/save', async (req, res) => {
   // Generate a clean ID from name or fallback to a random string
   let id = name ? name.replace(/[^a-zA-Z0-9_-]/g, '-') : crypto.randomBytes(4).toString('hex');
   
-  try {
-    // Handle simple collisions
-    const docRef = doc(db, 'playlists', id);
-    const docSnap = await getDoc(docRef);
-    
-    if (docSnap.exists() && !name) {
-        id = crypto.randomBytes(5).toString('hex');
-    }
+  const data = JSON.stringify({
+    urls,
+    duration: duration || 10,
+    isLive: isLive || false,
+    createdAt: new Date().toISOString()
+  });
 
-    await setDoc(doc(db, 'playlists', id), { 
-      urls, 
-      duration: duration || 10,
-      isLive: req.body.isLive || false,
-      createdAt: new Date().toISOString()
-    });
-    
+  try {
+    if (process.env.REDIS_URL) {
+      await redisClient.set(id, data);
+    } else {
+      memoryStore.set(id, data);
+    }
     res.json({ id, url: `/api/p/${id}.m3u8` });
   } catch (err) {
     console.error('Error saving playlist:', err);
@@ -66,13 +52,18 @@ app.get('/api/p/:id.m3u8', async (req, res) => {
   const id = req.params.id;
   
   try {
-    const docSnap = await getDoc(doc(db, 'playlists', id));
+    let rawData = null;
+    if (process.env.REDIS_URL) {
+      rawData = await redisClient.get(id);
+    } else {
+      rawData = memoryStore.get(id);
+    }
     
-    if (!docSnap.exists()) {
+    if (!rawData) {
       return res.status(404).send('Playlist not found');
     }
 
-    const data = docSnap.data() as { urls: string[], duration: number, isLive?: boolean };
+    const data = JSON.parse(rawData);
     let content = `#EXTM3U\n`;
     
     if (data.isLive) {
