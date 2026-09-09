@@ -8,11 +8,12 @@ const PORT = 3000;
 export default app;
 
 // Serve the actual M3U8 file statelessly from base64 data
-app.get('/api/generate.m3u8', (req, res) => {
+app.get(['/api/generate.m3u8', '/generate.m3u8'], (req, res) => {
   try {
     const dataParam = req.query.data as string;
     if (!dataParam) return res.status(400).send('Missing data');
 
+    // Decode base64
     const decoded = Buffer.from(dataParam, 'base64').toString('utf-8');
     const data = JSON.parse(decoded);
 
@@ -44,7 +45,6 @@ app.get('/api/generate.m3u8', (req, res) => {
 
     // Provide proper content type so media players recognize it
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-    res.setHeader('Content-Disposition', 'attachment; filename="playlist.m3u8"');
     res.setHeader('Access-Control-Allow-Origin', '*'); // Allow cross-origin for web players
     res.send(content);
   } catch (err) {

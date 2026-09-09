@@ -123,8 +123,9 @@ export default function App() {
         l: isLive
       };
       
+      // We must use encodeURIComponent because base64 can contain '+' which breaks URLs
       const base64 = btoa(JSON.stringify(payload));
-      const fullUrl = `${window.location.origin}/api/generate.m3u8?data=${base64}`;
+      const fullUrl = `${window.location.origin}/api/generate.m3u8?data=${encodeURIComponent(base64)}`;
       
       setShareableLink(fullUrl);
     } catch (err) {
