@@ -1,0 +1,6 @@
+{
+  "name": "TS to M3U8 Converter",
+  "description": "Convert single or multiple .ts video URLs into a valid .m3u8 playlist format.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
