@@ -3,10 +3,12 @@ import path from 'path';
 import crypto from 'crypto';
 import { createClient } from 'redis';
 
-// Note: For Vercel, you need to provide REDIS_URL in environment variables
-const redisClient = process.env.REDIS_URL ? createClient({ url: process.env.REDIS_URL }) : createClient();
-redisClient.on('error', err => console.log('Redis Client Error', err));
-redisClient.connect().catch(console.error);
+let redisClient: any = null;
+if (process.env.REDIS_URL) {
+  redisClient = createClient({ url: process.env.REDIS_URL });
+  redisClient.on('error', (err: any) => console.log('Redis Client Error', err));
+  redisClient.connect().catch(console.error);
+}
 
 // Fallback memory storage if Redis isn't configured
 const memoryStore = new Map<string, string>();
@@ -35,7 +37,7 @@ app.post('/api/save', async (req, res) => {
   });
 
   try {
-    if (process.env.REDIS_URL) {
+    if (redisClient) {
       await redisClient.set(id, data);
     } else {
       memoryStore.set(id, data);
@@ -53,7 +55,7 @@ app.get('/api/p/:id.m3u8', async (req, res) => {
   
   try {
     let rawData = null;
-    if (process.env.REDIS_URL) {
+    if (redisClient) {
       rawData = await redisClient.get(id);
     } else {
       rawData = memoryStore.get(id);
