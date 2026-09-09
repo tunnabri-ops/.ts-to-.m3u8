@@ -117,23 +117,16 @@ export default function App() {
     setShareableLink('');
       
     try {
-      const res = await fetch('/api/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          name: playlistName.trim(), 
-          urls, 
-          duration: Number(duration) || 10,
-          isLive
-        })
-      });
-      const data = await res.json();
-      if (data.url) {
-        // Create full absolute URL for sharing
-        setShareableLink(window.location.origin + data.url);
-      } else {
-        throw new Error(data.error || 'Failed to generate link');
-      }
+      const payload = {
+        u: urls,
+        d: Number(duration) || 10,
+        l: isLive
+      };
+      
+      const base64 = btoa(JSON.stringify(payload));
+      const fullUrl = `${window.location.origin}/api/generate.m3u8?data=${base64}`;
+      
+      setShareableLink(fullUrl);
     } catch (err) {
       console.error(err);
       alert('Failed to generate shareable link.');

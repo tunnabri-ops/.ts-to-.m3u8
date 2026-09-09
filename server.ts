@@ -1,17 +1,5 @@
 import express from 'express';
 import path from 'path';
-import crypto from 'crypto';
-import { createClient } from 'redis';
-
-let redisClient: any = null;
-if (process.env.REDIS_URL) {
-  redisClient = createClient({ url: process.env.REDIS_URL });
-  redisClient.on('error', (err: any) => console.log('Redis Client Error', err));
-  redisClient.connect().catch(console.error);
-}
-
-// Fallback memory storage if Redis isn't configured
-const memoryStore = new Map<string, string>();
 
 const app = express();
 app.use(express.json());
@@ -19,70 +7,36 @@ const PORT = 3000;
 
 export default app;
 
-// Generate the shareable M3U8 link
-app.post('/api/save', async (req, res) => {
-  const { name, urls, duration, isLive } = req.body;
-  if (!urls || !Array.isArray(urls)) {
-    return res.status(400).json({ error: 'urls array is required' });
-  }
-
-  // Generate a clean ID from name or fallback to a random string
-  let id = name ? name.replace(/[^a-zA-Z0-9_-]/g, '-') : crypto.randomBytes(4).toString('hex');
-  
-  const data = JSON.stringify({
-    urls,
-    duration: duration || 10,
-    isLive: isLive || false,
-    createdAt: new Date().toISOString()
-  });
-
+// Serve the actual M3U8 file statelessly from base64 data
+app.get('/api/generate.m3u8', (req, res) => {
   try {
-    if (redisClient) {
-      await redisClient.set(id, data);
-    } else {
-      memoryStore.set(id, data);
-    }
-    res.json({ id, url: `/api/p/${id}.m3u8` });
-  } catch (err) {
-    console.error('Error saving playlist:', err);
-    res.status(500).json({ error: 'Failed to save playlist' });
-  }
-});
+    const dataParam = req.query.data as string;
+    if (!dataParam) return res.status(400).send('Missing data');
 
-// Serve the actual M3U8 file
-app.get('/api/p/:id.m3u8', async (req, res) => {
-  const id = req.params.id;
-  
-  try {
-    let rawData = null;
-    if (redisClient) {
-      rawData = await redisClient.get(id);
-    } else {
-      rawData = memoryStore.get(id);
-    }
-    
-    if (!rawData) {
-      return res.status(404).send('Playlist not found');
-    }
+    const decoded = Buffer.from(dataParam, 'base64').toString('utf-8');
+    const data = JSON.parse(decoded);
 
-    const data = JSON.parse(rawData);
+    const urls = data.u || [];
+    const duration = data.d || 10;
+    const isLive = data.l || false;
+
     let content = `#EXTM3U\n`;
     
-    if (data.isLive) {
+    if (isLive) {
       // Standard IPTV format for continuous streams
-      data.urls.forEach((url: string, index: number) => {
+      urls.forEach((url: string, index: number) => {
         content += `#EXTINF:-1,Live Stream ${index + 1}\n${url}\n`;
       });
     } else {
       // Standard HLS VOD Playlist (Chunked TS segments)
-      const targetDuration = Math.ceil(Number(data.duration) || 10);
+      const targetDuration = Math.ceil(Number(duration) || 10);
       content += `#EXT-X-VERSION:3\n`;
       content += `#EXT-X-TARGETDURATION:${targetDuration}\n`;
       content += `#EXT-X-MEDIA-SEQUENCE:0\n`;
       content += `#EXT-X-PLAYLIST-TYPE:VOD\n`;
   
-      data.urls.forEach((url: string) => {
-        const exactDuration = Number(data.duration).toFixed(3);
+      urls.forEach((url: string) => {
+        const exactDuration = Number(duration).toFixed(3);
         content += `#EXTINF:${exactDuration},\n${url}\n`;
       });
       content += `#EXT-X-ENDLIST\n`;
@@ -90,11 +44,12 @@ app.get('/api/p/:id.m3u8', async (req, res) => {
 
     // Provide proper content type so media players recognize it
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Content-Disposition', 'attachment; filename="playlist.m3u8"');
     res.setHeader('Access-Control-Allow-Origin', '*'); // Allow cross-origin for web players
     res.send(content);
   } catch (err) {
-    console.error('Error retrieving playlist:', err);
-    res.status(500).send('Internal Server Error');
+    console.error('Error generating playlist:', err);
+    res.status(500).send('Invalid data format');
   }
 });
 
